@@ -42,7 +42,7 @@ The server runs on `http://localhost:3000` by default. It accepts POST requests 
 
 ## Nighty Integration
 
-To use this with Nighty, place the `generate_code.py` script in your Nighty scripts directory. The script will communicate with this server to generate code.
+To use this with Nighty, place the `generate_code.py` script in your Nighty scripts directory. The script will communicate with this server to generate code. You can also use `channel_importer.py` to copy messages between channels with advanced filters.
 
 ## Available Models
 

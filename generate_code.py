@@ -3,6 +3,7 @@ import requests               # synchronous HTTP client
 import asyncio
 import discord
 import re
+import shlex
 
 
 @nightyScript(
@@ -73,7 +74,7 @@ def generate_code_script():
     )
     async def gencode(ctx, *, args: str):
         await ctx.message.delete()
-        parts = args.split()
+        parts = shlex.split(args)
         model = "meta-llama/llama-4-maverick:free"
         language = "python"
 
