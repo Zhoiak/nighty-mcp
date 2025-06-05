@@ -282,7 +282,7 @@ def channel_importer():
         if key in scheduled_jobs:
             scheduled_jobs[key].cancel()
         job_opts = opts.copy()
-        loop = tasks.Loop(do_import, hours=interval, args=(job_opts,))
+        loop = tasks.Loop(lambda: do_import(job_opts), hours=interval)
         scheduled_jobs[key] = loop
         loop.start()
         await ctx.send(
