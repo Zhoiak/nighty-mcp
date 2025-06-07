@@ -53,8 +53,8 @@ def generate_code_script():
         """Clean up the response by removing explanatory text and fixing code blocks."""
         # Remove any explanatory text after the code block
         if "```" in text:
-            # Find the last code block
-            code_blocks = re.findall(r"```(?:python)?\n(.*?)```", text, re.DOTALL)
+            # Find the last fenced block regardless of language identifier
+            code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", text, re.DOTALL)
             if code_blocks:
                 return code_blocks[-1].strip()
         return text.strip()
