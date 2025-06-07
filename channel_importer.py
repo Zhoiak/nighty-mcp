@@ -162,6 +162,7 @@ def channel_importer():
 
     async def send_log(msg: str, channel_id=None):
         """Send a log message either to Discord or stdout."""
+        import builtins
         fb = getattr(builtins, 'forwardEmbedMethod', None)
         if channel_id and fb:
             try:
