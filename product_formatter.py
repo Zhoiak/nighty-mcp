@@ -151,6 +151,14 @@ def clean_block(text: str) -> str:
 
 
 def call_mcp(prompt: str, model: str = "meta-llama/llama-4-maverick:free") -> str:
+    try:
+        import builtins
+    except Exception:  # pragma: no cover - should never happen
+        class _Builtins:
+            def log(self, *a, **k):
+                pass
+
+        builtins = _Builtins()  # type: ignore
     if requests is None:
         builtins.log("requests library missing for MCP call", type_="ERROR")
         return "Unknown"
