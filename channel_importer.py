@@ -160,6 +160,17 @@ def channel_importer():
         except Exception:
             pass
 
+    async def send_log(msg: str, channel_id=None):
+        """Send a log message either to Discord or stdout."""
+        fb = getattr(builtins, 'forwardEmbedMethod', None)
+        if channel_id and fb:
+            try:
+                await fb(channel_id=channel_id, content=msg)
+            except Exception as e:
+                log(f"Failed to send log: {e}", type_="ERROR")
+        else:
+            log(msg)
+
     def parse_arguments(parts):
         source_id = None
         dest_id = None
@@ -279,16 +290,9 @@ def channel_importer():
 
     async def do_import(opts, ctx=None):
         import builtins
+        channel_id = opts.get('log_channel')
+        await send_log(f"Import options: {opts}", channel_id)
 
-        async def send_log(msg: str):
-            fb = getattr(builtins, 'forwardEmbedMethod', None)
-            if opts.get('log_channel') and fb:
-                try:
-                    await fb(channel_id=opts['log_channel'], content=msg)
-                except Exception as e:
-                    log(f"Failed to send log: {e}", type_="ERROR")
-            else:
-                log(msg)
         src_channel = bot.get_channel(opts['source_id'])
         dst_channel = bot.get_channel(opts['dest_id'])
         if not src_channel or not dst_channel:
@@ -296,7 +300,9 @@ def channel_importer():
                 await ctx.send("No pude acceder a uno de los canales.")
             return
 
-        await send_log(f"Starting import {opts['source_id']} -> {opts['dest_id']}")
+        await send_log(
+            f"Starting import {opts['source_id']} -> {opts['dest_id']}", channel_id
+        )
         try:
             msgs = []
             latest_time = None
@@ -318,11 +324,14 @@ def channel_importer():
                             spec.loader.exec_module(module)
                             pf = module
                             builtins.product_formatter = module
-                            await send_log(f"Formatter loaded from {opts['format_file']}")
+                            await send_log(
+                                f"Formatter loaded from {opts['format_file']}",
+                                channel_id,
+                            )
                         except Exception as e:
                             pf = False
                             builtins.product_formatter = False
-                            await send_log(f"Failed to load formatter: {e}")
+                            await send_log(f"Failed to load formatter: {e}", channel_id)
                     elif pf is None:
                         try:
                             import product_formatter as module
@@ -331,11 +340,12 @@ def channel_importer():
                         except Exception:
                             pf = False
                             builtins.product_formatter = False
+                            await send_log("Default formatter missing", channel_id)
                     if pf and hasattr(pf, 'format_description'):
                         try:
                             text = await pf.format_description(text)
                         except Exception as e:
-                            await send_log(f"Formatting error: {e}")
+                            await send_log(f"Formatting error: {e}", channel_id)
                 trend_line = f"Tendencia [{get_message_date(msg)}]"
                 if opts['signature']:
                     text = f"{text}\n{opts['signature']}" if text else opts['signature']
@@ -351,7 +361,7 @@ def channel_importer():
                         except asyncio.CancelledError:
                             raise
                         except Exception as e:
-                            await send_log(f"Error leyendo adjunto: {e}")
+                            await send_log(f"Error leyendo adjunto: {e}", channel_id)
                 msgs.append((text, files))
                 if latest_time is None or msg.created_at > latest_time:
                     latest_time = msg.created_at
@@ -360,9 +370,10 @@ def channel_importer():
         except Exception as e:
             if ctx:
                 await ctx.send(f"Error obteniendo mensajes: {e}")
-            await send_log(f"Error obteniendo mensajes: {e}")
+            await send_log(f"Error obteniendo mensajes: {e}", channel_id)
             return None
 
+        sent_count = 0
         for content, files in msgs:
             if content or files:
                 try:
@@ -370,16 +381,18 @@ def channel_importer():
                         await dst_channel.send(content or "", files=files)
                     else:
                         await dst_channel.send(content)
+                    sent_count += 1
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    await send_log(f"Error enviando mensaje: {e}")
+                    await send_log(f"Error enviando mensaje: {e}", channel_id)
                     await asyncio.sleep(1)
 
         if latest_time:
             import_history[(opts['source_id'], opts['dest_id'])] = latest_time
             save_import_history()
-        await send_log("Import completed")
+        await send_log(f"Sent {sent_count} messages", channel_id)
+        await send_log("Import completed", channel_id)
         return latest_time
 
 
@@ -446,6 +459,7 @@ def channel_importer():
             return
         parts = shlex.split(args)
         opts, error = parse_arguments(parts)
+        await send_log(f"Command: importmsgs {args}", opts.get('log_channel'))
         if error:
             await ctx.send(error)
             return
@@ -474,6 +488,7 @@ def channel_importer():
                     await ctx.send("Valor de --interval inválido.")
                     return
         opts, error = parse_arguments(parts)
+        await send_log(f"Command: scheduleimport {args}", opts.get('log_channel'))
         if error:
             await ctx.send(error)
             return
@@ -504,6 +519,10 @@ def channel_importer():
         }
         await ctx.send(
             f"Importación programada cada {interval}h para {key[0]} -> {key[1]}."
+        )
+        await send_log(
+            f"Scheduled import {key[0]} -> {key[1]} every {interval}h",
+            opts.get('log_channel'),
         )
 
     @bot.command(
