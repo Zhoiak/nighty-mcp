@@ -63,5 +63,6 @@ def test_call_mcp_failure(monkeypatch):
     product_formatter.requests = BadReq
     fmt = importlib.reload(product_formatter)
     out = asyncio.run(fmt.format_description("USA $5"))
-    assert "Unknown" in out
+    assert out.strip()
+    assert "Unknown" not in out
     assert any("MCP error" in m for m, _ in logged)

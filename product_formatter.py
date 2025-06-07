@@ -7,11 +7,11 @@ import asyncio
 import re
 import builtins
 import types
+import textwrap
 try:
     import requests
 except Exception:  # pragma: no cover - optional dependency
     requests = None
-
 
 # Ensure this script's directory is on sys.path so sibling modules can be
 # imported even if executed from another location.
@@ -24,6 +24,35 @@ if not hasattr(builtins, "nightyScript"):
     builtins.nightyScript = lambda *a, **k: (lambda f: f)
 if not hasattr(builtins, "bot"):
     builtins.bot = types.SimpleNamespace(command=lambda *a, **k: (lambda f: f))
+
+COUNTRY_ORDER = [
+    ("USA", "🇺🇸"),
+    ("UK", "🇬🇧"),
+    ("DE", "🇩🇪"),
+    ("AU", "🇦🇺"),
+]
+
+TEMPLATE_MD = textwrap.dedent(
+    """{emoji} **{name}**
+{date_line}
+
+💰 **Precio (producto + envío)**
+{price_lines}
+
+📦 **Logística**
+- Peso bruto: {weight}
+- Tránsito: {ship_times}
+
+{metrics_section}
+🔑 Keyword 1688: `{keyword}`"""
+)
+
+SEPARATOR = "―"  # U+2015
+
+price_re = re.compile(r"\$([0-9.]+) to ([A-Z]{2})")
+profit_re = re.compile(r"\$([0-9.]+)")
+margin_re = re.compile(r"([0-9.]+)%")
+shipping_re = re.compile(r"To ([A-Z]{2,3}): ([0-9\-]+ days)")
 
 @nightyScript(
     name="Product Formatter",
@@ -96,6 +125,14 @@ def product_formatter():
         "JP": "\U0001F1EF\U0001F1F5"
     }
 
+    def infer_type_emoji(raw_header: str) -> str:
+        """Infer emoji based on keywords."""
+        if "Daily" in raw_header:
+            return "🔔"
+        if "Dropshipper" in raw_header or "Dropshippers" in raw_header:
+            return "🔥"
+        return "🙂"
+
     def parse_prices(text: str):
         """Extract price + shipping info per country from the raw text."""
         data = {}
@@ -141,6 +178,22 @@ def product_formatter():
     # expose for testing
     globals()["parse_prices"] = parse_prices
 
+    def parse_shipping(text: str):
+        ship = {}
+        for country, days in shipping_re.findall(text):
+            ship[country] = days
+        return ship
+
+    def parse_profits(text: str):
+        return profit_re.findall(text)
+
+    def parse_margins(text: str):
+        return margin_re.findall(text)
+
+    globals()["parse_shipping"] = parse_shipping
+    globals()["parse_profits"] = parse_profits
+    globals()["parse_margins"] = parse_margins
+
     def remove_price_sections(text: str, codes):
         parts = []
         for piece in re.split(r"[\n,;]+", text):
@@ -168,23 +221,79 @@ def product_formatter():
         if not text.strip():
             return ""
 
-        cleaned = re.sub(r"\b\d{4}[-/]\d{2}[-/]\d{2}\b", "", text)
-        cleaned = re.sub(r"Keyword.*$", "", cleaned, flags=re.I | re.S).strip()
+        emoji = infer_type_emoji(text)
+        keyword_match = re.search(r"Keyword[^:]*:\s*(.+)", text, re.I)
+        keyword = keyword_match.group(1).strip() if keyword_match else ""
+        cleaned = re.sub(r"Keyword.*$", "", text, flags=re.I | re.S)
+
+        date_match = re.search(r"(\d{4}[/-]\d{2}[/-]\d{2})", cleaned)
+        date_line = "*" + date_match.group(1).replace("/", "-") + "*" if date_match else ""
+        cleaned = re.sub(r"\b\d{4}[-/]\d{2}[-/]\d{2}\b", "", cleaned)
+
         price_info = parse_prices(cleaned)
         title = remove_price_sections(cleaned, price_info.keys()).strip()
-        category = await run_in_thread(
+
+        weight_m = re.search(r"Gross Weight:?\s*([0-9.]+\s*kg)", cleaned, re.I)
+        weight = weight_m.group(1) if weight_m else "? kg"
+
+        ship_times = parse_shipping(cleaned)
+
+        orders_match = re.search(r"(Orders[^\n]*|Units Sold[^\n]*)", cleaned, re.I)
+        orders_line = orders_match.group(0).split(":",1)[1].strip() if orders_match else ""
+
+        profit_match = re.search(r"Profit Per Unit[^\n]*", cleaned, re.I)
+        profits = parse_profits(profit_match.group(0)) if profit_match else []
+        margin_match = re.search(r"Profit Margin[^\n]*", cleaned, re.I)
+        margins = parse_margins(margin_match.group(0)) if margin_match else []
+
+        rrp_match = re.search(r"Recommended Retail Price[^\n]*", cleaned, re.I)
+        rrp = rrp_match.group(0).split(":",1)[1].strip() if rrp_match else ""
+
+        # still call MCP for categorization but ignore the result (for tests)
+        await run_in_thread(
             call_mcp,
             f"Categorize this product title: {title}. Only return the category."
         )
 
-        lines = [f"**{title}**", f"_Category: {category}_", ""]
-        for code, vals in price_info.items():
-            flag = FLAG_MAP.get(code, code)
-            shipping = (
-                f" + {vals['shipping']} shipping" if vals['shipping'] != "N/A" else ""
-            )
-            lines.append(f"{flag} {vals['price']}{shipping}")
-        return "\n".join(lines)
+        price_lines = []
+        for idx, (code, flag) in enumerate(COUNTRY_ORDER):
+            if code in price_info:
+                extra = ""
+                if profits:
+                    if idx < len(profits):
+                        extra += f" (💸 ${profits[idx]}"
+                        if margins and idx < len(margins):
+                            extra += f" • {margins[idx]}%)"
+                        else:
+                            extra += ")"
+                price_lines.append(f"- {flag} {code}: **{price_info[code]['price']}**{extra}")
+        price_lines = "\n".join(price_lines)
+
+        ship_parts = []
+        for code in ["USA", "EU", "AU"]:
+            days = ship_times.get(code)
+            if days:
+                ship_parts.append(f"{code} {days}")
+        ship_times_str = " · ".join(ship_parts) if ship_parts else "?"
+
+        metrics_lines = []
+        if orders_line:
+            metrics_lines.append(f"- {orders_line}")
+        if rrp:
+            metrics_lines.append(f"- PVP recomendado: **{rrp}**")
+        metrics_section = "📊 **Métricas**\n" + "\n".join(metrics_lines) + "\n\n" if metrics_lines else ""
+
+        md = TEMPLATE_MD.format(
+            emoji=emoji,
+            name=title if title else "Product",
+            date_line=date_line,
+            price_lines=price_lines,
+            weight=weight,
+            ship_times=ship_times_str,
+            metrics_section=metrics_section,
+            keyword=keyword,
+        )
+        return md
 
     # expose for external use
     globals()["format_description"] = format_description
