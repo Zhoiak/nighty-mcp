@@ -63,12 +63,13 @@ def product_formatter():
         return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
     def clean_block(text: str) -> str:
-        m = re.search(r"```(?:text)?\n(.*?)```", text, re.DOTALL)
+        m = re.search(r"```(?:[a-zA-Z0-9_-]+)?\n(.*?)```", text, re.DOTALL)
         return m.group(1).strip() if m else text.strip()
 
     def call_mcp(prompt: str, model: str = "meta-llama/llama-4-maverick:free") -> str:
         if requests is None:
-            return "Unknown (requests library not installed)"
+            log("requests library missing for MCP call", type_="ERROR")
+            return "Unknown"
         try:
             resp = requests.post(
                 "http://localhost:3000/generate",
@@ -78,7 +79,8 @@ def product_formatter():
             resp.raise_for_status()
             return clean_block(resp.json().get("output", ""))
         except Exception as e:
-            return f"Unknown ({e})"
+            log(f"MCP error: {e}", type_="ERROR")
+            return "Unknown"
 
     FLAG_MAP = {
         "USA": "\U0001F1FA\U0001F1F8",
@@ -111,13 +113,20 @@ def product_formatter():
                     continue
 
                 # format 1: "USA $99" (optionally with "shipping $X")
-                m1 = re.match(r"([A-Za-z]{2,3})[^$€£\d]*([$€£]?\d+(?:\.\d+)?)", sub)
+                m1 = re.search(
+                    r"\b([A-Za-z]{2,3})\b[^$€£\d]*([$€£]?\d+(?:\.\d+)?)",
+                    sub,
+                )
                 if m1:
                     code = m1.group(1).upper()
                     price = m1.group(2)
                 else:
                     # format 2: "$99 to USA"
-                    m2 = re.match(r"([$€£]?\d+(?:\.\d+)?)\s*to\s*([A-Za-z]{2,3})", sub, re.I)
+                    m2 = re.search(
+                        r"([$€£]?\d+(?:\.\d+)?)\s*to\s*([A-Za-z]{2,3})",
+                        sub,
+                        re.I,
+                    )
                     if not m2:
                         continue
                     price = m2.group(1)
@@ -138,7 +147,15 @@ def product_formatter():
             p = piece.strip()
             if not p:
                 continue
-            if any(p.startswith(c) for c in codes):
+            skip = False
+            for code in codes:
+                if re.search(rf"\b{code}\b[^$€£\d]*[$€£]?\d", p):
+                    skip = True
+                    break
+                if re.search(rf"[$€£]?\d+(?:\.\d+)?\s*to\s*{code}\b", p, re.I):
+                    skip = True
+                    break
+            if skip:
                 continue
             parts.append(p)
         return " ".join(parts)

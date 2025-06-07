@@ -1,5 +1,6 @@
 import builtins
 import importlib
+import asyncio
 import sys
 import types
 from pathlib import Path
@@ -43,3 +44,24 @@ def test_parse_prices_mixed_formats():
         "USA": {"price": "$70", "shipping": "$5"},
         "DE": {"price": "€60", "shipping": "N/A"},
     }
+
+
+def test_word_boundary_parsing():
+    text = "Hause Price (Product Cost+Shipping Cost): $4.03 to USA"
+    result = parse_prices(text)
+    assert result == {"USA": {"price": "$4.03", "shipping": "N/A"}}
+
+
+def test_call_mcp_failure(monkeypatch):
+    logged = []
+    builtins.log = lambda m, type_="INFO": logged.append((m, type_))
+
+    class BadReq:
+        def post(*a, **k):
+            raise RuntimeError("fail")
+
+    product_formatter.requests = BadReq
+    fmt = importlib.reload(product_formatter)
+    out = asyncio.run(fmt.format_description("USA $5"))
+    assert "Unknown" in out
+    assert any("MCP error" in m for m, _ in logged)

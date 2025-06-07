@@ -56,5 +56,14 @@ def test_price_to_country_format():
         "USA": {"price": "$99", "shipping": "N/A"},
         "UK": {"price": "£80", "shipping": "N/A"},
     }
-    # remove_price_sections does not drop price-to-country pieces
-    assert title == "$99 to USA / £80 to UK Another Item"
+    # price segments should be removed from the title
+    assert title == "Another Item"
+
+
+def test_remove_embedded_price_segment():
+    text = "Cool Product, Price: $4.03 to USA"
+    cleaned = _clean_text(text)
+    prices = parse_prices(cleaned)
+    title = remove_price_sections(cleaned, prices.keys()).strip()
+    assert prices == {"USA": {"price": "$4.03", "shipping": "N/A"}}
+    assert title == "Cool Product"
