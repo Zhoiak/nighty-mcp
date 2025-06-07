@@ -7,7 +7,7 @@ A local server that uses OpenRouter's API to generate code for Nighty scripts. T
 - Code generation using OpenRouter's API
 - Support for multiple AI models
 - Automatic code block formatting
-- Error handling and logging
+- Error handling and Discord logging via `--log-channel`
 - Context-aware generation using project documentation
 
 ## Prerequisites

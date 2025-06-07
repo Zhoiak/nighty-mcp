@@ -92,6 +92,8 @@ opts = {
     'signature': '',
     'mention_roles': [],
     'format_product': True,
+    'format_file': None,
+    'log_channel': None,
 }
 
 asyncio.run(do_import(opts))
