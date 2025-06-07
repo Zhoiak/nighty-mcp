@@ -171,6 +171,8 @@ def channel_importer():
         signature = ""
         mention_roles = []
         format_product = False
+        format_file = None
+        log_channel = None
         error = None
 
         def consume_option(opt: str):
@@ -194,11 +196,18 @@ def channel_importer():
         before_val = consume_option('--before')
         sig_val = consume_option('--signature')
         if '--format-product' in parts:
-            format_product = True
-            parts.remove('--format-product')
+            idx = parts.index('--format-product')
+            if idx + 1 < len(parts) and not parts[idx + 1].startswith('--'):
+                format_product = True
+                format_file = parts[idx + 1]
+                del parts[idx:idx + 2]
+            else:
+                format_product = True
+                parts.remove('--format-product')
         if '--include-files' in parts:
             include_files = True
             parts.remove('--include-files')
+        log_val = consume_option('--log-channel')
 
         if src_val:
             try:
@@ -241,6 +250,11 @@ def channel_importer():
                 error = "Formato de fecha inválido en --before (YYYY-MM-DD)."
         if sig_val:
             signature = sig_val
+        if log_val:
+            try:
+                log_channel = int(log_val)
+            except ValueError:
+                error = "ID de log inválido."
 
         return {
             'source_id': source_id,
@@ -256,10 +270,20 @@ def channel_importer():
             'signature': signature,
             'mention_roles': mention_roles,
             'format_product': format_product,
+            'format_file': format_file,
+            'log_channel': log_channel,
         }, error
 
     async def do_import(opts, ctx=None):
         import builtins
+        async def send_log(msg):
+            if opts.get('log_channel'):
+                try:
+                    await forwardEmbedMethod(channel_id=opts['log_channel'], content=msg)
+                except Exception as e:
+                    log(f"Failed to send log: {e}", type_="ERROR")
+            else:
+                log(msg)
         src_channel = bot.get_channel(opts['source_id'])
         dst_channel = bot.get_channel(opts['dest_id'])
         if not src_channel or not dst_channel:
@@ -267,6 +291,7 @@ def channel_importer():
                 await ctx.send("No pude acceder a uno de los canales.")
             return
 
+        await send_log(f"Starting import {opts['source_id']} -> {opts['dest_id']}")
         try:
             msgs = []
             latest_time = None
@@ -280,16 +305,32 @@ def channel_importer():
                     text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
                 pf = getattr(builtins, 'product_formatter', None)
                 if opts.get('format_product'):
-                    if pf is None:
+                    if opts.get('format_file'):
                         try:
-                            import importlib
-                            pf = importlib.import_module('product_formatter')
-                            builtins.product_formatter = pf
+                            import importlib.util
+                            spec = importlib.util.spec_from_file_location('product_formatter', opts['format_file'])
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            pf = module
+                            builtins.product_formatter = module
+                            await send_log(f"Formatter loaded from {opts['format_file']}")
+                        except Exception as e:
+                            pf = False
+                            builtins.product_formatter = False
+                            await send_log(f"Failed to load formatter: {e}")
+                    elif pf is None:
+                        try:
+                            import product_formatter as module
+                            pf = module
+                            builtins.product_formatter = module
                         except Exception:
                             pf = False
                             builtins.product_formatter = False
                     if pf and hasattr(pf, 'format_description'):
-                        text = await pf.format_description(text)
+                        try:
+                            text = await pf.format_description(text)
+                        except Exception as e:
+                            await send_log(f"Formatting error: {e}")
                 trend_line = f"Tendencia [{get_message_date(msg)}]"
                 if opts['signature']:
                     text = f"{text}\n{opts['signature']}" if text else opts['signature']
@@ -305,7 +346,7 @@ def channel_importer():
                         except asyncio.CancelledError:
                             raise
                         except Exception as e:
-                            log(f"Error leyendo adjunto: {e}", type_="ERROR")
+                            await send_log(f"Error leyendo adjunto: {e}")
                 msgs.append((text, files))
                 if latest_time is None or msg.created_at > latest_time:
                     latest_time = msg.created_at
@@ -314,8 +355,7 @@ def channel_importer():
         except Exception as e:
             if ctx:
                 await ctx.send(f"Error obteniendo mensajes: {e}")
-            else:
-                log(f"Error obteniendo mensajes: {e}", type_="ERROR")
+            await send_log(f"Error obteniendo mensajes: {e}")
             return None
 
         for content, files in msgs:
@@ -328,12 +368,13 @@ def channel_importer():
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    log(f"Error enviando mensaje: {e}", type_="ERROR")
+                    await send_log(f"Error enviando mensaje: {e}")
                     await asyncio.sleep(1)
 
         if latest_time:
             import_history[(opts['source_id'], opts['dest_id'])] = latest_time
             save_import_history()
+        await send_log("Import completed")
         return latest_time
 
 
